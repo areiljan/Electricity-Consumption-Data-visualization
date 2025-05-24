@@ -6,8 +6,7 @@
 	<div id="app">
 		<h1>Electricity Consumption Data Visualization</h1>
 		<DataViz />
-	</div>
-
+	</div>	</template>
 <style scoped>
 .logo {
   height: 6em;
