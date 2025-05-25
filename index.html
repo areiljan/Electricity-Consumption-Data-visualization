@@ -1,14 +1,266 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/Electricity-Consumption-Data-Visualization/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + Vue</title>
-    <script type="module" crossorigin src="/Electricity-Consumption-Data-Visualization/assets/index-Cfe59F4Z.js"></script>
-    <link rel="stylesheet" crossorigin href="/Electricity-Consumption-Data-Visualization/assets/index-D5SbCcmK.css">
-  </head>
-  <body>
-    <div id="app"></div>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <title>Electricity Price</title>
+  <style>
+    body { font: 12px sans-serif; }
+
+    .chart-container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-around;
+    }
+
+    .chart {
+      margin: 20px;
+      border: 1px solid #ccc;
+      padding: 10px;
+    }
+
+    .header {
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1 class="header">100-day visualizations on one dataset</h1>
+  <div class="chart-container">
+    <div class="chart" id="stacked-area-chart">
+      <h2>Stacked Area Chart</h2>
+        <svg></svg>
+      <p>Each stack representing the cumulative consumption on this weekday in the hundred day period</p>
+      <p>As you can see the consumption is pretty even on a weekday basis, making a peak on Monday and being the lowest on Wednesdays.</p>
+    </div>
+  </div>
+  <h1 class="header">One day visualization for a lot of different datasets</h1>
+  <div class="chart-container">
+    <div class="chart" id="stacked-area-chart-summer-solstice">
+      <h2>Stacked Area Chart</h2>
+        <svg></svg>
+      <p>Each colored stack represents the consumption for this household in the hour</p>
+      <p>The consumption is a little skewed because of the small dataset being comprised of 10 households. <br> The overall trend is clear, the consumption on the Estonian holiday Jaanipäev is the lowest in the early morning, <br> slowly rising during the day and reaching a tipping point at midnight.</p>
+    </div>
+  </div>
+  <script src="https://unpkg.com/d3@7"></script>
+  <script>
+    async function loadData() {
+      const dsv = d3.dsvFormat(";");
+      const raw = await fetch("data/data.csv").then(r => r.text());
+      let data = dsv.parse(raw, d => {
+        d.Periood = d3.timeParse("%d.%m.%Y %H:%M")(d.Periood);
+        d.price = +d["Tarbitud energia (võrgust) / kWh"].replace(",", ".");
+        return d;
+      });
+      
+      data = data.slice(0, 100 * 24);
+
+      data.forEach(d => {
+        d.day = Math.floor(d3.timeDay.count(d3.timeYear(d.Periood), d.Periood)) + 1;
+        d.hour = +d3.timeFormat("%H")(d.Periood);
+      });
+
+      return data;
+    }
+
+    async function loadSummerSolsticeData() {
+      const dsv = d3.dsvFormat(";");
+      const fileNames = [ "1.csv", "2.csv", "3.csv", "4.csv", "5.csv", "6.csv", "7.csv", "8.csv", "9.csv"];
+      let allData = [];
+
+      for (const fileName of fileNames) {
+        const raw = await fetch(`data/jaanipaev/${fileName}`).then(r => r.text());
+        console.log(fileName, raw.split("\n")[0]);
+        const fileData = dsv.parse(raw, d => {
+          return {
+            Periood: d3.timeParse("%d.%m.%Y %H:%M")(d.Periood),
+            price: +d["Tarbitud energia (võrgust) / kWh"].replace(",", "."),
+            source: fileName     // ← tag it here
+          };
+        });
+        allData = allData.concat(fileData);
+      }
+
+      // compute day/hour
+      allData.forEach(d => {
+        d.hour = +d3.timeFormat("%H")(d.Periood);
+      });
+
+      return allData;
+    }
+
+    function createStackedAreaChart(data, containerId) {
+      const container = d3.select(`#${containerId} svg`);
+      const margin = { top: 20, right: 30, bottom: 30, left: 40 };
+      const width = 600 - margin.left - margin.right;
+      const height = 300 - margin.top - margin.bottom;
+
+      const svg = container
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      // Add day of week to data
+      data.forEach(d => {
+        d.dayOfWeek = d3.timeFormat("%A")(d.Periood);
+      });
+
+      const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+      const hours = d3.range(0, 24);
+
+      const x = d3.scaleBand()
+      .domain(daysOfWeek)
+      .range([0, width])
+      .padding(0.1);
+
+      // Calculate average price for each day of week and hour
+      const avgData = [];
+      daysOfWeek.forEach(dayOfWeek => {
+        hours.forEach(hour => {
+          const dayHourData = data.filter(d => d.dayOfWeek === dayOfWeek && d.hour === hour);
+          const avgPrice = dayHourData.length > 0 ? d3.mean(dayHourData, d => d.price) : 0;
+          avgData.push({ dayOfWeek, hour, price: avgPrice });
+        });
+      });
+
+      const stack = d3.stack()
+      .keys(hours)
+      .value((d, key) => {
+        const matchingData = avgData.find(item => item.dayOfWeek === d.dayOfWeek && item.hour === key);
+        return matchingData ? matchingData.price : 0;
+      });
+
+      const stackedData = stack(daysOfWeek.map(dayOfWeek => ({ dayOfWeek })));
+
+      const maxStacked = d3.max(stackedData, series =>
+        d3.max(series, d => d[1])
+      );
+
+      const y = d3.scaleLinear()
+        .domain([0, maxStacked])
+        .nice()            
+        .range([height, 0]);
+
+      const color = d3.scaleSequential(d3.interpolateViridis)
+      .domain([0, 23]);
+
+      svg.append("g")
+      .selectAll("g")
+      .data(stackedData)
+      .enter().append("g")
+      .attr("fill", d => color(d.key))
+      .selectAll("rect")
+      .data(d => d)
+      .enter().append("rect")
+      .attr("x", d => x(d.data.dayOfWeek))
+      .attr("y", d => y(d[1]))
+      .attr("width", x.bandwidth())
+      .attr("height", d => y(d[0]) - y(d[1]));
+
+      svg.append("g")
+      .attr("transform", `translate(0,${height})`)
+      .call(d3.axisBottom(x));
+
+      svg.append("g")
+      .call(d3.axisLeft(y));
+    }
+
+    function createStackedAreaChartSummerSolstice(allData, containerId) {
+      const container = d3.select(`#${containerId} svg`);
+      const margin = { top: 20, right: 30, bottom: 30, left: 40 };
+      const width = 600 - margin.left - margin.right;
+      const height = 300 - margin.top - margin.bottom;
+
+      const svg = container
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+       const june24 = allData.filter(d =>
+        d.Periood.getMonth() === 5 && d.Periood.getDate() === 24
+        );
+
+      // determine one stack per source file
+      const datasets = Array.from(new Set(june24.map(d => d.source)));
+
+      // group records by source
+      const bySource = d3.group(june24, d => d.source);
+
+      const stack = d3.stack()
+        .keys(datasets)
+        .value((d, key) => {
+          // collect *all* prices for this hour in this source
+          const hits = bySource.get(key).filter(item => item.hour === d.hour);
+          // sum them (in case of duplicates)
+          return d3.sum(hits, h => h.price);
+        });
+
+      const hours = d3.range(0, 24);
+      const stackedData = stack(hours.map(h => ({ hour: h })));
+
+      // compute y‐domain *after* stacking
+      const maxStacked = d3.max(stackedData, layer =>
+        d3.max(layer, d => d[1])
+      );
+      const y = d3.scaleLinear()
+        .domain([0, maxStacked])
+        .nice()
+        .range([height, 0]);
+
+      // your color scale
+      const color = d3.scaleOrdinal()
+        .domain(datasets)
+        .range(
+          d3.schemeCategory10
+          .concat(d3.schemeSet3)
+          .slice(0, datasets.length)
+        );
+
+
+      const x = d3.scaleBand()
+      .domain(hours)
+      .range([0, width])
+      .padding(0.1);
+
+      svg.append("g")
+        .selectAll("g")
+        .data(stackedData)
+        .enter().append("g")
+        .attr("fill", d => color(d.key))
+        .selectAll("rect")
+        .data(d => d)
+        .enter().append("rect")
+        .attr("x",      d => x(d.data.hour))
+        .attr("y",      d => y(d[1]))
+        .attr("width",  x.bandwidth())
+        .attr("height", d => y(d[0]) - y(d[1]));
+
+      svg.append("g")
+      .attr("transform", `translate(0,${height})`)
+      .call(d3.axisBottom(x));
+
+      svg.append("g")
+      .call(d3.axisLeft(y));
+
+      // Add title
+      svg.append("text")
+      .attr("x", width / 2)
+      .attr("y", -5)
+      .attr("text-anchor", "middle")
+      .style("font-size", "14px")
+      .style("font-weight", "bold")
+      .text("Jaanipäev (June 24th) - Electricity Consumption by Hour");
+    }
+
+    loadData().then(data => {
+      createStackedAreaChart(data, "stacked-area-chart");
+    });
+
+    loadSummerSolsticeData().then(data => {
+      createStackedAreaChartSummerSolstice(data, "stacked-area-chart-summer-solstice")
+    })
+  </script>
+</body>
 </html>
